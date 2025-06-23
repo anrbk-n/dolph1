@@ -37,8 +37,8 @@ def save_figure_to_local(pil_crop, save_dir, image_name, reading_order):
     """
     try:
         # Create figures directory if it doesn't exist
-        figures_dir = os.path.join(save_dir, "markdown", "figures")
-        # os.makedirs(figures_dir, exist_ok=True)
+        figures_dir = os.path.join(save_dir, "figures")
+        os.makedirs(figures_dir, exist_ok=True)
         
         # Generate figure filename
         figure_filename = f"{image_name}_figure_{reading_order:03d}.png"

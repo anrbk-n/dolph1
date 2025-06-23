@@ -229,7 +229,6 @@ class MarkdownConverter:
             # Check if it's a file path starting with "figures/"
             if text.startswith("figures/"):
                 # Convert to relative path from markdown directory to figures directory
-                relative_path = f"../{text}"
                 return f"![Figure {section_count}]({relative_path})\n\n"
 
             # Check if it's already a markdown format image link

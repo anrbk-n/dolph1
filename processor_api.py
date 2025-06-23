@@ -120,7 +120,7 @@ def process_elements(
                 fn = save_figure_to_local(pil_crop, save_dir, image_name or "", order)
                 figure_items.append({
                     "label": label,
-                    "text": f"![Figure](figures/{fn})",
+                    "text": f"figures/{fn}",
                     "figure_path": f"figures/{fn}",
                     "bbox": [ox1, oy1, ox2, oy2],
                     "reading_order": order,

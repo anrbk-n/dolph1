@@ -67,6 +67,7 @@ class DOLPHIN:
             align_long_axis=self.swin_args["align_long_axis"],
         )
 
+
         self.tokenizer = PreTrainedTokenizerFast(tokenizer_file=self.model_args.tokenizer_path)
         self.tokenizer.pad_token = "<pad>"
         self.tokenizer.bos_token = "<s>"

@@ -229,7 +229,7 @@ class MarkdownConverter:
             # Check if it's a file path starting with "figures/"
             if text.startswith("figures/"):
                 # Convert to relative path from markdown directory to figures directory
-                return f"![Figure {section_count}]({relative_path})\n\n"
+                return f"![Figure {section_count}]({text})\n\n"
 
             # Check if it's already a markdown format image link
             if text.startswith("!["):
@@ -427,10 +427,11 @@ class MarkdownConverter:
                                     markdown_content)
 
             # Find the starting tag of the formula
-            markdown_content = markdown_content.replace("\[ \\\\", "$$ \\\\")
+            markdown_content = markdown_content.replace(r"\[ \\\\", r"$$ \\\\")
 
             # Find the ending tag of the formula (ensure this is the only ending tag)
-            markdown_content = markdown_content.replace("\\\\ \]", "\\\\ $$")
+            markdown_content = markdown_content.replace(r"\\\ \]", r"\\\ $$")
+
 
             # Fix other common LaTeX issues
             replacements = [

@@ -67,9 +67,9 @@ def get_model() -> DOLPHIN:  # lazy singleton
 # FastAPI app
 # -----------------------------------------------------------------------------
 app = FastAPI(
-    title="Dolphin OCR‑VQA API",
-    version="0.2.0",
-    description="Image question answering, element parsing and Markdown generation",
+    title="Dolphin test",
+    version="0.1.0",
+    description="For test",
     docs_url="/docs",
 )
 

@@ -27,12 +27,11 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse
 from omegaconf import OmegaConf
 from PIL import Image
-from all_utils.markdown_utils import MarkdownConverter
-
 
 from chat import DOLPHIN
 from processor_api import generate_markdown, process_document, process_element
 from all_utils.utils import setup_output_dirs
+from all_utils.markdown_utils import MarkdownConverter
 
 # -----------------------------------------------------------------------------
 # Helper: free reserved-but-unused GPU memory
@@ -136,9 +135,14 @@ async def markdown(file: UploadFile = File(..., description="PDF or image")) -> 
         str(ROOT_OUT),
         CONFIG.model.max_batch_size if hasattr(CONFIG.model, "max_batch_size") else 4,
     )
-
+    if isinstance(results, dict) and "pages" in results:
+        blocks = list(chain.from_iterable(p["blocks"] for p in results["pages"]))
+    elif isinstance(results, dict) and "blocks" in results:
+        blocks = results["blocks"]
+    else:
+        blocks = results
     # 3) generate Markdown text
-    md = MarkdownConverter().convert(results)
+    md = MarkdownConverter().convert(blocks)
 
     # 4) optional: remove temp source file to save disk space
     try:

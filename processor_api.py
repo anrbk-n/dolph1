@@ -17,6 +17,9 @@ import numpy as np
 from PIL import Image
 from omegaconf import OmegaConf
 
+from typing import Any, List
+from itertools import chain
+
 from chat import DOLPHIN
 from all_utils.utils import (
     convert_pdf_to_images,
@@ -185,23 +188,35 @@ def process_document(
         return process_single_image(img, model, save_dir, base, max_batch_size)
 
 
+
+
 def generate_markdown(results: Any) -> str:
+    md: List[str] = []
+
     """
     Convert recognition results into Markdown string.
     """
-    md: List[str] = []
     if isinstance(results, list) and results and "page" in results[0]:
-        for pg in results:
-            md.append(f"## Page {pg['page']}\n")
-            for el in pg['elements']:
-                if el['label'] == 'fig':
-                    md.append(f"![Figure]({el['figure_path']})\n")
-                else:
-                    md.append(f"- **{el['label']}**: {el['text']}\n")
+        elements = list(chain.from_iterable(p["elements"] for p in results))
     else:
-        for el in results:
-            if el['label'] == 'fig':
-                md.append(f"![Figure]({el['figure_path']})\n")
-            else:
-                md.append(f"- **{el['label']}**: {el['text']}\n")
-    return "\n".join(md)
+        elements = results
+
+    for el in elements:
+        label = el.get("label")
+        text  = el.get("text", "").strip()
+
+        if label in ("sec", "section"):
+            md.append(f"## {text}\n")
+        elif label in ("sub_sec", "subsection"):
+            md.append(f"### {text}\n")
+        elif label == "para" or label is None:
+            md.append(f"{text}\n")
+        elif label == "tab":
+            md.append(f"{el['html']}\n")
+        elif label == "fig":
+            caption = el.get("caption", "Figure")
+            md.append(f"![{caption}]({el['figure_path']})\n")
+        else:  # fallback
+            md.append(f"{text}\n")
+
+    return "\n".join(md).strip() + "\n"

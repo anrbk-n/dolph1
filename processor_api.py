@@ -212,7 +212,7 @@ def generate_markdown(results: Any) -> str:
         elif label == "para" or label is None:
             md.append(f"{text}\n")
         elif label == "tab":
-            md.append(f"{el['html']}\n")
+            md.append(f"{el['text']}\n")
         elif label == "fig":
             caption = el.get("caption", "Figure")
             md.append(f"![{caption}]({el['figure_path']})\n")

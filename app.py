@@ -27,6 +27,8 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse
 from omegaconf import OmegaConf
 from PIL import Image
+from all_utils.markdown_utils import MarkdownConverter
+
 
 from chat import DOLPHIN
 from processor_api import generate_markdown, process_document, process_element
@@ -136,7 +138,7 @@ async def markdown(file: UploadFile = File(..., description="PDF or image")) -> 
     )
 
     # 3) generate Markdown text
-    md = generate_markdown(results)
+    md = MarkdownConverter().convert(results)
 
     # 4) optional: remove temp source file to save disk space
     try:
@@ -144,7 +146,7 @@ async def markdown(file: UploadFile = File(..., description="PDF or image")) -> 
     except OSError:
         pass
 
-    clear_cuda()
+    clear_cuda()    
     return PlainTextResponse(md, media_type="text/markdown")
 
 # -----------------------------------------------------------------------------

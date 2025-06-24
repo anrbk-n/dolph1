@@ -3,12 +3,13 @@ model:
   tokenizer_path: "./checkpoints/dolphin_tokenizer.json"
   extra_answer_tokens: True   # add <Answer/> token
   max_length: 4096
+  max_batch_size: 4
   decoder_layer: 10
   max_position_embeddings: 4096
   hidden_dimension: 1024
   swin_args:
     name: 'swin'
-    img_size: [896, 896]
+    img_size: [896, 896],
     patch_size: 4
     embed_dim: 128
     align_long_axis: False

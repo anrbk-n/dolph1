@@ -46,7 +46,7 @@ def save_figure_to_local(pil_crop, save_dir, image_name, reading_order):
         figure_path = os.path.join(figures_dir, figure_filename)
         
         # Save the figure
-        pil_crop.save(figure_path, format="PNG", quality=95)
+        pil_crop.save(figure_path, format="PNG", quality=100)
         
         # print(f"Saved figure: {figure_filename}")
         return figure_filename

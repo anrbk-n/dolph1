@@ -9,7 +9,7 @@ model:
   hidden_dimension: 1024
   swin_args:
     name: 'swin'
-    img_size: [896, 896],
+    img_size: [896, 896]
     patch_size: 4
     embed_dim: 128
     align_long_axis: False

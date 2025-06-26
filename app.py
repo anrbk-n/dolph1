@@ -1,154 +1,180 @@
-"""app.py
-FastAPI wrapper for Dolphin OCR‑VQA – low‑memory & tidy outputs
-==============================================================
-
-* Saves **all** artefacts to `<project>/result/`:
-
-```
-result/
- ├─ markdown/     # *.md and combined JSON
- └─ figures/      # cropped images
-```
-* Frees GPU VRAM after every heavy call (`clear_cuda()`).
-* Sets `PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128` automatically if not present.
 """
+app.py — Dolphin OCR-VQA + Google OAuth2 (with userinfo fallback) + E-mail confirm
+=================================================================================
+Endpoints
+---------
+POST /markdown                 – PDF / image → Markdown
+GET  /login  → /auth           – Google OAuth2 sign-in
+POST /send-confirmation-email  – send confirmation mail
+GET  /confirm/{token}          – confirm user e-mail
+"""
+
 from __future__ import annotations
+from dotenv import load_dotenv
+load_dotenv()
 
 import gc
-import io
 import os
+import smtplib
 import tempfile
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from pathlib import Path
+from uuid import uuid4
 
+from starlette.middleware.sessions import SessionMiddleware
+from authlib.integrations.httpx_client import AsyncOAuth2Client
+from authlib.integrations.starlette_client import OAuth
 import anyio
 import torch
 import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi import (
+    BackgroundTasks,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+)
+from fastapi.responses import PlainTextResponse, JSONResponse
 from omegaconf import OmegaConf
-from PIL import Image
 
-from chat import DOLPHIN
-from processor_api import generate_markdown, process_document, process_element
 from all_utils.utils import setup_output_dirs
+from chat import DOLPHIN
+from processor_api import process_document, generate_markdown
 
-# -----------------------------------------------------------------------------
-# Helper: free reserved-but-unused GPU memory
-# -----------------------------------------------------------------------------
-
+# ───────────────────────────────────── GPU helper ───────────────────────────
 def clear_cuda() -> None:
-    """Release cached and IPC-held VRAM so next request starts fresh."""
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
 
-# Ensure allocator uses low‑fragmentation mode unless user overrode it
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:128")
 
-# -----------------------------------------------------------------------------
-# Config + shared model instance
-# -----------------------------------------------------------------------------
+# ───────────────────────────────────── Model init ───────────────────────────
 CFG_PATH = os.getenv("DOLPHIN_CONFIG", "config/Dolphin.yaml")
-CONFIG = OmegaConf.load(CFG_PATH)
-ROOT_OUT = Path.cwd() / "result"          # <project>/result
-setup_output_dirs(ROOT_OUT)                # create result/, markdown/, figures/
+CONFIG   = OmegaConf.load(CFG_PATH)
+ROOT_OUT = Path.cwd() / "result"
+setup_output_dirs(ROOT_OUT)
 
+def get_model() -> DOLPHIN:                           # lazy singleton
+    if not hasattr(get_model, "_model") or get_model._model is None:   # type: ignore[attr-defined]
+        get_model._model = DOLPHIN(CONFIG)                            # type: ignore[attr-defined]
+    return get_model._model                                           # type: ignore[return-value]
 
-def get_model() -> DOLPHIN:  # lazy singleton
-    if not hasattr(get_model, "_model") or get_model._model is None:  # type: ignore[attr-defined]
-        get_model._model = DOLPHIN(CONFIG)  # type: ignore[attr-defined]
-        # Uncomment next two lines if ваш GPU поддерживает FP16 и хочется ещё -35 % VRAM
-        # get_model._model.model.half()
-        # get_model._model.vpm.half()
-    return get_model._model  # type: ignore[return-value]
+# ───────────────────────────────────── FastAPI app ──────────────────────────
+app = FastAPI(title="Dolphin API", version="0.3.0", docs_url="/docs")
 
-# -----------------------------------------------------------------------------
-# FastAPI app
-# -----------------------------------------------------------------------------
-app = FastAPI(
-    title="Dolphin test",
-    version="0.1.0",
-    description="For test",
-    docs_url="/docs",
+# cookie-based session for OAuth state/nonce
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.getenv("SESSION_SECRET_KEY"),
 )
 
-# -----------------------------------------------------------------------------
-# /inference : single‑image Q&A
-# -----------------------------------------------------------------------------
-@app.post("/inference", response_model=dict[str, str])
-async def inference(
-    file: UploadFile = File(..., description="PNG/JPEG image file"),
-    question: str = Form(..., description="Prompt / question for the image"),
-) -> JSONResponse:
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(415, "Only image uploads are supported")
-
-    try:
-        img = Image.open(io.BytesIO(await file.read())).convert("RGB")
-    except Exception as exc:
-        raise HTTPException(400, "Invalid image file") from exc
-
-    answer = await anyio.to_thread.run_sync(get_model().chat, question, img)
-    clear_cuda()
-    return JSONResponse({"answer": answer})
-
-# -----------------------------------------------------------------------------
-# /element : OCR one element (text / table / formula)
-# -----------------------------------------------------------------------------
-@app.post("/element", response_model=dict[str, object])
-async def element(
-    file: UploadFile = File(..., description="PNG/JPEG of a document element"),
-    element_type: str = Form(..., description="text | table | formula"),
-) -> JSONResponse:
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(415, "Only image uploads are supported")
-
-    suffix = Path(file.filename).suffix or ".png"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(await file.read())
-        tmp_path = tmp.name
-
-    text, results = await anyio.to_thread.run_sync(
-        process_element, tmp_path, get_model(), element_type, str(ROOT_OUT)
-    )
-    clear_cuda()
-    return JSONResponse({"text": text, "results": results})
-
-# -----------------------------------------------------------------------------
-# /markdown : full PDF / image → Markdown
-# -----------------------------------------------------------------------------
-@app.post("/markdown", response_class=PlainTextResponse)
-async def markdown(file: UploadFile = File(..., description="PDF or image")) -> PlainTextResponse:
-    # 1) save upload to a temp file on disk (required by pymupdf)
+# ─────────────────────────────── Markdown endpoint ──────────────────────────
+@app.post("/markdown", response_class=PlainTextResponse, summary="PDF/image → MD")
+async def markdown(file: UploadFile = File(...)):
     suffix = Path(file.filename).suffix or ".pdf"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(await file.read())
         tmp_path = tmp.name
 
-    # 2) run heavy parsing in a worker thread
-    _, results = await anyio.to_thread.run_sync(
+    _, res = await anyio.to_thread.run_sync(
         process_document,
         tmp_path,
         get_model(),
         str(ROOT_OUT),
-        CONFIG.model.max_batch_size if hasattr(CONFIG.model, "max_batch_size") else 4,
+        CONFIG.model.get("max_batch_size", 4),
     )
+    md = generate_markdown(res)
 
-    # 3) generate Markdown text
-    md = generate_markdown(results)
-
-    # 4) optional: remove temp source file to save disk space
     try:
         os.remove(tmp_path)
-    except OSError:
-        pass
+    finally:
+        clear_cuda()
 
-    clear_cuda()
     return PlainTextResponse(md, media_type="text/markdown")
 
-# -----------------------------------------------------------------------------
-# Dev entry‑point
-# -----------------------------------------------------------------------------
+# ─────────────────────────────── Google OAuth2 flow ─────────────────────────
+oauth = OAuth()
+oauth.register(
+    name="google",
+    client_id=os.getenv("GOOGLE_CLIENT_ID"),
+    client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+    client_kwargs={"scope": "openid email profile"},
+)
+
+@app.get("/login", summary="Start Google OAuth2 sign-in")
+async def login(request: Request):
+    redirect_uri = request.url_for("google_auth_callback")
+    return await oauth.google.authorize_redirect(request, redirect_uri)
+
+@app.get("/auth", name="google_auth_callback")
+async def auth(request: Request):
+    token = await oauth.google.authorize_access_token(request)
+
+    if "id_token" in token:                                  # ← сheck
+        userinfo = await oauth.google.parse_id_token(token, nonce=None)
+
+    else:                                                    # ← fallback
+        async with AsyncOAuth2Client(token=token) as c:
+            resp = await c.get(oauth.google.server_metadata["userinfo_endpoint"])
+            if resp.status_code != 200:
+                raise HTTPException(400, "Failed to fetch userinfo")
+            userinfo = resp.json()
+
+    return {
+        "id":    userinfo.get("sub") or userinfo.get("id"),
+        "name":  userinfo.get("name"),
+        "email": userinfo.get("email"),
+        "message": (
+            "Google sign-in successful"
+            if "id_token" in token
+            else "Google sign-in successful (via userinfo fallback)"
+        ),
+    }
+# ───────────────────────────── Mail confirmation flow ───────────────────────
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+SMTP_USER = os.getenv("SMTP_USER")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+EMAIL_FROM = os.getenv("EMAIL_FROM", SMTP_USER)
+CONFIRM_BASE_URL = os.getenv("CONFIRM_BASE_URL", "http://localhost:8000/confirm")
+
+def _send_mail(receiver: str, link: str) -> None:
+    msg = MIMEMultipart()
+    msg["From"], msg["To"], msg["Subject"] = EMAIL_FROM, receiver, "E-mail confirmation"
+    msg.attach(MIMEText(
+        f"Hello!\n\nPlease confirm your account:\n{link}\n\nIf you didn't request this, ignore.",
+        "plain",
+    ))
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
+            s.starttls()
+            s.login(SMTP_USER, SMTP_PASSWORD)
+            s.sendmail(EMAIL_FROM, receiver, msg.as_string())
+    except Exception as exc:
+        raise HTTPException(500, f"SMTP error: {exc}") from exc
+
+@app.post("/send-confirmation-email", summary="Send confirmation e-mail")
+async def send_confirmation_email(
+    background_tasks: BackgroundTasks,
+    user_email: str = Form(..., description="Recipient e-mail"),
+):
+    token = uuid4().hex
+    link  = f"{CONFIRM_BASE_URL}/{token}"
+    # TODO: store token↔e-mail in DB / cache
+    background_tasks.add_task(_send_mail, user_email, link)
+    return {"message": "Confirmation e-mail sent", "debug_link": link}
+
+@app.get("/confirm/{token}", summary="Confirm user e-mail")
+async def confirm_email(token: str):
+    # TODO: validate token and activate user
+    return {"message": "E-mail confirmed", "token": token}
+
+# ───────────────────────────────── Dev run ───────────────────────────────────
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)

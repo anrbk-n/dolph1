@@ -13,3 +13,9 @@ pymupdf==1.26
 anyio
 uvicorn
 python-multipart
+fastapi
+python-dotenv
+authx
+authlib
+pydantic
+fastapi_mail

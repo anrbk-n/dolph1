@@ -175,6 +175,5 @@ async def confirm_email(token: str):
     # TODO: validate token and activate user
     return {"message": "E-mail confirmed", "token": token}
 
-# ───────────────────────────────── Dev run ───────────────────────────────────
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)

@@ -5,15 +5,15 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 
-load_dotenv()  # read .env into process env
+load_dotenv()  
 
 # SMTP settings --------------------------------------------------------------
 SMTP_SERVER = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT   = int(os.getenv("SMTP_PORT", 587))
-SENDER_EMAIL = os.getenv("SMTP_USER")           # outgoing mailbox
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")      # app-password / API key
+SENDER_EMAIL = os.getenv("SMTP_USER")           
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")      
 
-SUBJECT = "Email confirmation"                 # <--- added constant
+SUBJECT = "Email confirmation"                
 # ---------------------------------------------------------------------------
 
 
